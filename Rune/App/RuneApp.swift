@@ -50,21 +50,28 @@ private struct RootView: View {
         }
         .task {
             await settingsViewModel.bootstrap()
+            await syncAuthenticatedState()
         }
-        .task(id: settingsViewModel.isAuthenticated) {
-            guard let client = settingsViewModel.client else {
-                domainViewModel.reset()
-                tokenViewModel.reset()
-                selectedTab = 0
-                return
+        .onChange(of: settingsViewModel.client) { _, _ in
+            Task {
+                await syncAuthenticatedState()
             }
-
-            await domainViewModel.loadDomains(client: client)
-            await tokenViewModel.loadTokens(client: client)
         }
         .fullScreenCover(isPresented: onboardingBinding) {
             OnboardingView(viewModel: settingsViewModel)
         }
+    }
+
+    private func syncAuthenticatedState() async {
+        guard let client = settingsViewModel.client else {
+            domainViewModel.reset()
+            tokenViewModel.reset()
+            selectedTab = 0
+            return
+        }
+
+        await domainViewModel.loadDomains(client: client)
+        await tokenViewModel.loadTokens(client: client)
     }
 
     private var onboardingBinding: Binding<Bool> {

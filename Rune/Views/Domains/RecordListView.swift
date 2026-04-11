@@ -8,22 +8,45 @@ struct RecordListView: View {
     @State private var showingAddRecord = false
 
     var body: some View {
-        Group {
+        List {
+            if let errorMessage = viewModel.recordsErrorMessage {
+                Section {
+                    InlineErrorView(message: errorMessage, retryTitle: "Retry Records") {
+                        Task {
+                            await viewModel.loadRecords(for: domainName, client: client)
+                        }
+                    }
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                }
+            }
+
             if viewModel.isLoadingRecords && viewModel.records.isEmpty {
-                ProgressView()
+                Section {
+                    HStack {
+                        Spacer()
+                        ProgressView("Loading Records")
+                        Spacer()
+                    }
+                }
             } else if viewModel.records.isEmpty {
-                ContentUnavailableView("No Records", systemImage: "list.bullet", description: Text("No DNS records for this domain."))
+                Section {
+                    ContentUnavailableView(
+                        "No Records",
+                        systemImage: "list.bullet",
+                        description: Text("No DNS records for this domain yet. Add a record to get started.")
+                    )
+                }
             } else {
-                List(viewModel.records) { record in
+                ForEach(viewModel.records) { record in
                     NavigationLink {
                         RecordEditView(domainName: domainName, record: record, viewModel: viewModel, client: client)
                     } label: {
                         RecordRow(record: record)
                     }
                 }
-                .listStyle(.insetGrouped)
             }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("DNS Records")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -41,22 +64,34 @@ struct RecordListView: View {
         .task {
             await viewModel.loadRecords(for: domainName, client: client)
         }
+        .onAppear {
+            viewModel.startAutoRefreshRecords(for: domainName, client: client)
+        }
+        .onDisappear {
+            viewModel.stopAutoRefreshRecords()
+        }
         .refreshable {
             await viewModel.loadRecords(for: domainName, client: client)
         }
-        .alert("API Error", isPresented: errorBinding) {
+        .overlay(alignment: .top) {
+            if viewModel.isLoadingRecords && !viewModel.records.isEmpty {
+                ProgressView()
+                    .padding(.top, 8)
+            }
+        }
+        .alert("Request Failed", isPresented: mutationErrorBinding) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(viewModel.errorMessage ?? "")
+            Text(viewModel.mutationErrorMessage ?? "")
         }
     }
 
-    private var errorBinding: Binding<Bool> {
+    private var mutationErrorBinding: Binding<Bool> {
         Binding(
-            get: { viewModel.errorMessage != nil },
+            get: { viewModel.mutationErrorMessage != nil },
             set: { newValue in
                 if !newValue {
-                    viewModel.errorMessage = nil
+                    viewModel.dismissMutationError()
                 }
             }
         )

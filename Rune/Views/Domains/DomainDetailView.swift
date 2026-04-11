@@ -25,6 +25,12 @@ struct DomainDetailView: View {
                         DetailRow(label: "Nameservers", value: nameserverText(domain.nameservers))
                     }
 
+                    Section("Email") {
+                        NavigationLink("Forwards") {
+                            ForwardListView(domainName: domain.name, viewModel: viewModel, client: client)
+                        }
+                    }
+
                     Section("DNS") {
                         NavigationLink("Records") {
                             RecordListView(domainName: domain.name, viewModel: viewModel, client: client)
@@ -49,7 +55,12 @@ struct DomainDetailView: View {
         .alert("API Error", isPresented: errorBinding) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(viewModel.errorMessage ?? "")
+            Text(viewModel.detailErrorMessage ?? "")
+        }
+        .alert("Request Failed", isPresented: mutationErrorBinding) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(viewModel.mutationErrorMessage ?? "")
         }
     }
 
@@ -88,10 +99,21 @@ struct DomainDetailView: View {
 
     private var errorBinding: Binding<Bool> {
         Binding(
-            get: { viewModel.errorMessage != nil },
+            get: { viewModel.detailErrorMessage != nil },
             set: { newValue in
                 if !newValue {
-                    viewModel.errorMessage = nil
+                    viewModel.detailErrorMessage = nil
+                }
+            }
+        )
+    }
+
+    private var mutationErrorBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.mutationErrorMessage != nil },
+            set: { newValue in
+                if !newValue {
+                    viewModel.dismissMutationError()
                 }
             }
         )

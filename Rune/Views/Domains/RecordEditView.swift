@@ -10,7 +10,6 @@ struct RecordEditView: View {
 
     @State private var draft: DNSRecordDraft
     @State private var showingDeleteConfirmation = false
-    @State private var localErrorMessage: String?
 
     init(domainName: String, record: DNSRecord, viewModel: DomainViewModel, client: NjallaClient) {
         self.domainName = domainName
@@ -35,71 +34,85 @@ struct RecordEditView: View {
 
             Section {
                 Button("Delete Record", role: .destructive) {
+                    guard !viewModel.isSaving else { return }
                     showingDeleteConfirmation = true
                 }
                 .foregroundStyle(.red)
+                .disabled(viewModel.isSaving)
             }
         }
         .navigationTitle(record.name)
         .navigationBarTitleDisplayMode(.inline)
+        .overlay {
+            if viewModel.isSaving {
+                ProgressView()
+                    .controlSize(.large)
+            }
+        }
+        .interactiveDismissDisabled(viewModel.isSaving)
         .onChange(of: draft.type) { oldValue, newValue in
             guard oldValue != newValue else { return }
             draft.resetTypeSpecificFields()
         }
-        .confirmationDialog(
-            "Delete \(record.type) record \(record.name)?",
-            isPresented: $showingDeleteConfirmation,
-            titleVisibility: .visible
-        ) {
+        .alert(deleteAlertTitle, isPresented: $showingDeleteConfirmation) {
             Button("Delete Record", role: .destructive) {
                 Task {
                     await deleteRecord()
                 }
             }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This action cannot be undone.")
         }
-        .alert("API Error", isPresented: localErrorBinding) {
+        .alert("Request Failed", isPresented: mutationErrorBinding) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(localErrorMessage ?? "")
+            Text(viewModel.mutationErrorMessage ?? "")
         }
     }
 
     private func save() async {
+        guard !viewModel.isSaving else {
+            return
+        }
+
         do {
             try await viewModel.editRecord(for: domainName, recordID: record.id, draft: draft, client: client)
             dismiss()
         } catch is CancellationError {
             return
         } catch {
-            if (error as? URLError)?.code == .cancelled {
-                return
-            }
-            localErrorMessage = error.localizedDescription
+            return
         }
     }
 
     private func deleteRecord() async {
+        guard !viewModel.isSaving else {
+            return
+        }
+
         do {
             try await viewModel.removeRecord(record, client: client)
             dismiss()
         } catch is CancellationError {
             return
         } catch {
-            if (error as? URLError)?.code == .cancelled {
-                return
-            }
-            localErrorMessage = error.localizedDescription
+            return
         }
     }
 
-    private var localErrorBinding: Binding<Bool> {
+    private var mutationErrorBinding: Binding<Bool> {
         Binding(
-            get: { localErrorMessage != nil },
+            get: { viewModel.mutationErrorMessage != nil },
             set: { newValue in
                 if !newValue {
-                    localErrorMessage = nil
+                    viewModel.dismissMutationError()
                 }
             }
         )
+    }
+
+    private var deleteAlertTitle: String {
+        "Delete \(record.type) record \(record.name)?"
     }
 }

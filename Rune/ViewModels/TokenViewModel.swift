@@ -6,16 +6,20 @@ final class TokenViewModel: ObservableObject {
     @Published private(set) var tokens: [APIToken] = []
     @Published private(set) var isLoading = false
     @Published private(set) var isSaving = false
-    @Published var errorMessage: String?
+    @Published var listErrorMessage: String?
+    @Published var mutationErrorMessage: String?
 
     func reset() {
         tokens = []
         isLoading = false
         isSaving = false
-        errorMessage = nil
+        listErrorMessage = nil
+        mutationErrorMessage = nil
     }
 
     func loadTokens(client: NjallaClient) async {
+        guard !isLoading else { return }
+
         isLoading = true
         defer {
             isLoading = false
@@ -25,59 +29,74 @@ final class TokenViewModel: ObservableObject {
             tokens = try await client.listTokens().sorted {
                 tokenLabel(for: $0).localizedCaseInsensitiveCompare(tokenLabel(for: $1)) == .orderedAscending
             }
-            errorMessage = nil
+            listErrorMessage = nil
         } catch is CancellationError {
             return
         } catch {
             if (error as? URLError)?.code == .cancelled {
                 return
             }
-            errorMessage = error.localizedDescription
+            listErrorMessage = error.userFacingMessage
         }
     }
 
     func addToken(request: TokenCreateRequest, client: NjallaClient) async -> Bool {
+        guard !isSaving else { return false }
+
         isSaving = true
-        defer {
-            isSaving = false
-        }
+        mutationErrorMessage = nil
 
         do {
             try await client.addToken(request: request)
-            tokens = try await client.listTokens()
-            errorMessage = nil
+            isSaving = false
+            Task {
+                await loadTokens(client: client)
+            }
             return true
         } catch is CancellationError {
+            isSaving = false
             return false
         } catch {
             if (error as? URLError)?.code == .cancelled {
+                isSaving = false
                 return false
             }
-            errorMessage = error.localizedDescription
+            isSaving = false
+            mutationErrorMessage = error.userFacingMessage
             return false
         }
     }
 
     func removeToken(_ token: APIToken, client: NjallaClient) async -> Bool {
+        guard !isSaving else { return false }
+
         isSaving = true
-        defer {
-            isSaving = false
-        }
+        mutationErrorMessage = nil
 
         do {
             try await client.removeToken(key: token.key)
             tokens.removeAll { $0.key == token.key }
-            errorMessage = nil
+            isSaving = false
+            Task {
+                await loadTokens(client: client)
+            }
             return true
         } catch is CancellationError {
+            isSaving = false
             return false
         } catch {
             if (error as? URLError)?.code == .cancelled {
+                isSaving = false
                 return false
             }
-            errorMessage = error.localizedDescription
+            isSaving = false
+            mutationErrorMessage = error.userFacingMessage
             return false
         }
+    }
+
+    func dismissMutationError() {
+        mutationErrorMessage = nil
     }
 
     func tokenLabel(for token: APIToken) -> String {
@@ -87,5 +106,11 @@ final class TokenViewModel: ObservableObject {
         }
 
         return String(token.key.prefix(8))
+    }
+
+    private func sortedTokens(_ tokens: [APIToken]) -> [APIToken] {
+        tokens.sorted {
+            tokenLabel(for: $0).localizedCaseInsensitiveCompare(tokenLabel(for: $1)) == .orderedAscending
+        }
     }
 }

@@ -8,7 +8,6 @@ struct RecordAddView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var draft = DNSRecordDraft()
-    @State private var localErrorMessage: String?
     var body: some View {
         Form {
             DNSRecordFormSections(draft: $draft)
@@ -24,44 +23,54 @@ struct RecordAddView: View {
         }
         .navigationTitle("Add Record")
         .navigationBarTitleDisplayMode(.inline)
+        .overlay {
+            if viewModel.isSaving {
+                ProgressView()
+                    .controlSize(.large)
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel", role: .cancel) {
                     dismiss()
                 }
+                .disabled(viewModel.isSaving)
             }
         }
+        .interactiveDismissDisabled(viewModel.isSaving)
         .onChange(of: draft.type) { oldValue, newValue in
             guard oldValue != newValue else { return }
             draft.resetTypeSpecificFields()
         }
-        .alert("API Error", isPresented: localErrorBinding) {
+        .alert("Request Failed", isPresented: mutationErrorBinding) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(localErrorMessage ?? "")
+            Text(viewModel.mutationErrorMessage ?? "")
         }
     }
 
     private func save() async {
+        guard !viewModel.isSaving else {
+            return
+        }
+
         do {
             try await viewModel.addRecord(for: domainName, draft: draft, client: client)
+            draft = DNSRecordDraft()
             dismiss()
         } catch is CancellationError {
             return
         } catch {
-            if (error as? URLError)?.code == .cancelled {
-                return
-            }
-            localErrorMessage = error.localizedDescription
+            return
         }
     }
 
-    private var localErrorBinding: Binding<Bool> {
+    private var mutationErrorBinding: Binding<Bool> {
         Binding(
-            get: { localErrorMessage != nil },
+            get: { viewModel.mutationErrorMessage != nil },
             set: { newValue in
                 if !newValue {
-                    localErrorMessage = nil
+                    viewModel.dismissMutationError()
                 }
             }
         )
@@ -94,8 +103,12 @@ struct DNSRecordFormSections: View {
 
         if draft.type.usesTTL {
             Section("TTL") {
-                TextField("TTL", text: $draft.ttl)
-                    .keyboardType(.numberPad)
+                Picker("TTL", selection: $draft.ttlSeconds) {
+                    ForEach(draft.ttlOptions) { option in
+                        Text(option.isCustom ? "Custom (\(option.label))" : option.label)
+                            .tag(option.seconds)
+                    }
+                }
             }
         }
 

@@ -9,8 +9,12 @@ struct TokenAddView: View {
     @State private var comment = ""
     @State private var fromText = ""
     @State private var allowedMethodsText = ""
+    @State private var allowedDomainsText = ""
+    @State private var unrestrictedConfirmed = false
     @State private var ipValidationMessage: String?
     @State private var methodValidationMessage: String?
+    @State private var domainValidationMessage: String?
+    @State private var restrictionValidationMessage: String?
 
     var body: some View {
         Form {
@@ -47,6 +51,36 @@ struct TokenAddView: View {
             }
 
             Section {
+                TextEditor(text: $allowedDomainsText)
+                    .frame(minHeight: 100)
+                if let domainValidationMessage {
+                    Text(domainValidationMessage)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            } header: {
+                Text("Allowed Domains")
+            } footer: {
+                Text("Optional. Enter one domain per line to limit the token to specific domains.")
+            }
+
+            Section("Restrictions") {
+                Text("At least one restriction is recommended. Tokens without restrictions can access any allowed API method from any origin.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                if lines(fromText).isEmpty && lines(allowedMethodsText).isEmpty && lines(allowedDomainsText).isEmpty {
+                    Toggle("I understand this token will be unrestricted", isOn: $unrestrictedConfirmed)
+                }
+
+                if let restrictionValidationMessage {
+                    Text(restrictionValidationMessage)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+
+            Section {
                 Button("Save") {
                     Task {
                         await save()
@@ -57,27 +91,48 @@ struct TokenAddView: View {
         }
         .navigationTitle("Add Token")
         .navigationBarTitleDisplayMode(.inline)
+        .overlay {
+            if viewModel.isSaving {
+                ProgressView()
+                    .controlSize(.large)
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel", role: .cancel) {
                     dismiss()
                 }
+                .disabled(viewModel.isSaving)
             }
         }
+        .interactiveDismissDisabled(viewModel.isSaving)
         .onChange(of: fromText) { _, _ in
             ipValidationMessage = nil
+            restrictionValidationMessage = nil
+            unrestrictedConfirmed = false
         }
         .onChange(of: allowedMethodsText) { _, _ in
             methodValidationMessage = nil
+            restrictionValidationMessage = nil
+            unrestrictedConfirmed = false
         }
-        .alert("API Error", isPresented: errorBinding) {
+        .onChange(of: allowedDomainsText) { _, _ in
+            domainValidationMessage = nil
+            restrictionValidationMessage = nil
+            unrestrictedConfirmed = false
+        }
+        .alert("Request Failed", isPresented: errorBinding) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(viewModel.errorMessage ?? "")
+            Text(viewModel.mutationErrorMessage ?? "")
         }
     }
 
     private func save() async {
+        guard !viewModel.isSaving else {
+            return
+        }
+
         guard validateInput() else {
             return
         }
@@ -85,10 +140,12 @@ struct TokenAddView: View {
         let request = TokenCreateRequest(
             comment: comment,
             from: lines(fromText),
-            allowedMethods: lines(allowedMethodsText)
+            allowedMethods: lines(allowedMethodsText),
+            allowedDomains: lines(allowedDomainsText)
         )
 
         if await viewModel.addToken(request: request, client: client) {
+            resetForm()
             dismiss()
         }
     }
@@ -103,6 +160,7 @@ struct TokenAddView: View {
     private func validateInput() -> Bool {
         let ipEntries = lines(fromText)
         let methodEntries = lines(allowedMethodsText)
+        let domainEntries = lines(allowedDomainsText)
 
         ipValidationMessage = ipEntries.allSatisfy(isValidIPOrCIDR(_:))
             ? nil
@@ -112,7 +170,19 @@ struct TokenAddView: View {
             ? nil
             : "One or more method names appear invalid. Use format: list-domains"
 
-        return ipValidationMessage == nil && methodValidationMessage == nil
+        domainValidationMessage = domainEntries.allSatisfy(isValidDomainName(_:))
+            ? nil
+            : "One or more domain entries appear invalid."
+
+        let hasRestrictions = !ipEntries.isEmpty || !methodEntries.isEmpty || !domainEntries.isEmpty
+        restrictionValidationMessage = hasRestrictions || unrestrictedConfirmed
+            ? nil
+            : "Add at least one restriction or confirm unrestricted token creation."
+
+        return ipValidationMessage == nil &&
+            methodValidationMessage == nil &&
+            domainValidationMessage == nil &&
+            restrictionValidationMessage == nil
     }
 
     private func isValidMethodName(_ value: String) -> Bool {
@@ -124,12 +194,28 @@ struct TokenAddView: View {
         return value.range(of: pattern, options: .regularExpression) != nil
     }
 
+    private func isValidDomainName(_ value: String) -> Bool {
+        value.range(of: #"^(?=.{1,253}$)([A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,}$"#, options: .regularExpression) != nil
+    }
+
+    private func resetForm() {
+        comment = ""
+        fromText = ""
+        allowedMethodsText = ""
+        allowedDomainsText = ""
+        unrestrictedConfirmed = false
+        ipValidationMessage = nil
+        methodValidationMessage = nil
+        domainValidationMessage = nil
+        restrictionValidationMessage = nil
+    }
+
     private var errorBinding: Binding<Bool> {
         Binding(
-            get: { viewModel.errorMessage != nil },
+            get: { viewModel.mutationErrorMessage != nil },
             set: { newValue in
                 if !newValue {
-                    viewModel.errorMessage = nil
+                    viewModel.dismissMutationError()
                 }
             }
         )

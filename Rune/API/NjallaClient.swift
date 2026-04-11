@@ -25,12 +25,7 @@ struct NjallaClient: Sendable, Equatable {
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-
-        #if DEBUG
-        debugPrint("Njalla method:", method)
-        debugPrint("Njalla status:", statusCode)
-        #endif
+        _ = (response as? HTTPURLResponse)?.statusCode ?? -1
 
         let decoder = JSONDecoder()
         let envelope = try decoder.decode(RPCResponse<T>.self, from: data)
@@ -61,6 +56,33 @@ struct NjallaClient: Sendable, Equatable {
         return try await call("edit-domain", params: params)
     }
 
+    func listForwards(for domain: String) async throws -> [EmailForward] {
+        let response: ForwardListResponse = try await call("list-forwards", params: ["domain": domain])
+        return response.forwards
+    }
+
+    func addForward(forward: EmailForward) async throws {
+        let _: EmptyResult = try await call(
+            "add-forward",
+            params: [
+                "domain": forward.domain,
+                "from": forward.from,
+                "to": forward.to
+            ]
+        )
+    }
+
+    func removeForward(_ forward: EmailForward) async throws {
+        let _: EmptyResult = try await call(
+            "remove-forward",
+            params: [
+                "domain": forward.domain,
+                "from": forward.from,
+                "to": forward.to
+            ]
+        )
+    }
+
     func listRecords(for domain: String) async throws -> [DNSRecord] {
         let response: RecordListResponse = try await call("list-records", params: ["domain": domain])
         return response.records.map { record in
@@ -76,14 +98,17 @@ struct NjallaClient: Sendable, Equatable {
         try await call("edit-record", params: draft.params(domain: domain, id: id))
     }
 
-    func removeRecord(_ record: DNSRecord) async throws {
+    func removeRecord(_ record: DNSRecord) async throws -> [DNSRecord] {
         let params: [String: Any] = [
             "domain": record.domain,
             "id": record.id,
             "name": record.name,
             "type": record.type
         ]
-        let _: RecordListResponse = try await call("remove-record", params: params)
+        let response: RecordListResponse = try await call("remove-record", params: params)
+        return response.records.map { item in
+            item.domain.isEmpty ? item.withDomain(record.domain) : item
+        }
     }
 
     func listTokens() async throws -> [APIToken] {
@@ -107,6 +132,7 @@ struct NjallaClient: Sendable, Equatable {
 enum NjallaError: LocalizedError {
     case api(message: String)
     case missingResult
+    case networkFailure
 
     var errorDescription: String? {
         switch self {
@@ -114,7 +140,28 @@ enum NjallaError: LocalizedError {
             return message
         case .missingResult:
             return "The API response did not include a result."
+        case .networkFailure:
+            return "Network request failed. Check your connection and try again."
         }
+    }
+}
+
+extension Error {
+    var userFacingMessage: String {
+        if let njallaError = self as? NjallaError {
+            return njallaError.localizedDescription
+        }
+
+        if let urlError = self as? URLError {
+            switch urlError.code {
+            case .cancelled:
+                return urlError.localizedDescription
+            default:
+                return NjallaError.networkFailure.localizedDescription
+            }
+        }
+
+        return localizedDescription
     }
 }
 

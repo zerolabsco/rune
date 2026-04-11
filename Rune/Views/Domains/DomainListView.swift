@@ -15,43 +15,58 @@ struct DomainListView: View {
             }
             .navigationTitle("Domains")
         }
-        .alert("API Error", isPresented: errorBinding) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(viewModel.errorMessage ?? "")
-        }
     }
 
     @ViewBuilder
     private func content(client: NjallaClient) -> some View {
-        if viewModel.isLoadingDomains && viewModel.domains.isEmpty {
-            ProgressView()
-        } else if viewModel.domains.isEmpty {
-            ContentUnavailableView("No Domains", systemImage: "globe", description: Text("No domains found on this account."))
-        } else {
-            List(viewModel.domains) { domain in
-                NavigationLink {
-                    DomainDetailView(domainName: domain.name, viewModel: viewModel, client: client)
-                } label: {
-                    DomainRow(domain: domain)
+        List {
+            if let errorMessage = viewModel.domainsErrorMessage {
+                Section {
+                    InlineErrorView(message: errorMessage, retryTitle: "Retry Domains") {
+                        Task {
+                            await viewModel.loadDomains(client: client)
+                        }
+                    }
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                 }
             }
-            .listStyle(.insetGrouped)
-            .refreshable {
-                await viewModel.loadDomains(client: client)
+
+            if (!viewModel.hasLoadedDomains || viewModel.isLoadingDomains) && viewModel.domains.isEmpty {
+                Section {
+                    HStack {
+                        Spacer()
+                        ProgressView("Loading Domains")
+                        Spacer()
+                    }
+                }
+            } else if viewModel.domains.isEmpty {
+                Section {
+                    ContentUnavailableView(
+                        "No Domains",
+                        systemImage: "globe",
+                        description: Text("No domains found. Pull to refresh after domains are added to this account.")
+                    )
+                }
+            } else {
+                ForEach(viewModel.domains) { domain in
+                    NavigationLink {
+                        DomainDetailView(domainName: domain.name, viewModel: viewModel, client: client)
+                    } label: {
+                        DomainRow(domain: domain)
+                    }
+                }
             }
         }
-    }
-
-    private var errorBinding: Binding<Bool> {
-        Binding(
-            get: { viewModel.errorMessage != nil },
-            set: { newValue in
-                if !newValue {
-                    viewModel.errorMessage = nil
-                }
+        .listStyle(.insetGrouped)
+        .refreshable {
+            await viewModel.loadDomains(client: client)
+        }
+        .overlay(alignment: .top) {
+            if viewModel.isLoadingDomains && !viewModel.domains.isEmpty {
+                ProgressView()
+                    .padding(.top, 8)
             }
-        )
+        }
     }
 }
 

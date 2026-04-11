@@ -8,10 +8,15 @@ struct DomainEditView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var autorenew: Bool
+    @State private var autorenewDirty = false
     @State private var mailforwarding: Bool
+    @State private var mailforwardingDirty = false
     @State private var dnssec: Bool
+    @State private var dnssecDirty = false
     @State private var lock: Bool
+    @State private var lockDirty = false
     @State private var nameserversText: String
+    @State private var nameserversDirty = false
     @State private var localErrorMessage: String?
 
     init(domain: Domain, viewModel: DomainViewModel, client: NjallaClient) {
@@ -28,14 +33,14 @@ struct DomainEditView: View {
     var body: some View {
         Form {
             Section("Settings") {
-                Toggle("Autorenew", isOn: $autorenew)
-                Toggle("Mail Forwarding", isOn: $mailforwarding)
-                Toggle("DNSSEC", isOn: $dnssec)
-                Toggle("Registrar Lock", isOn: $lock)
+                Toggle("Autorenew", isOn: dirtyBinding(for: $autorenew, dirty: $autorenewDirty, original: originalAutorenew))
+                Toggle("Mail Forwarding", isOn: dirtyBinding(for: $mailforwarding, dirty: $mailforwardingDirty, original: originalMailForwarding))
+                Toggle("DNSSEC", isOn: dirtyBinding(for: $dnssec, dirty: $dnssecDirty, original: originalDNSSEC))
+                Toggle("Registrar Lock", isOn: dirtyBinding(for: $lock, dirty: $lockDirty, original: originalLock))
             }
 
             Section {
-                TextEditor(text: $nameserversText)
+                TextEditor(text: nameserversBinding)
                     .frame(minHeight: 120)
             } header: {
                 Text("Nameservers")
@@ -49,12 +54,27 @@ struct DomainEditView: View {
                         await save()
                     }
                 }
-                .disabled(viewModel.isSaving)
+                .disabled(viewModel.isSaving || !request.hasChanges)
             }
         }
         .navigationTitle("Edit Domain")
         .navigationBarTitleDisplayMode(.inline)
-        .alert("API Error", isPresented: localErrorBinding) {
+        .overlay {
+            if viewModel.isSaving {
+                ProgressView()
+                    .controlSize(.large)
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel", role: .cancel) {
+                    dismiss()
+                }
+                .disabled(viewModel.isSaving)
+            }
+        }
+        .interactiveDismissDisabled(viewModel.isSaving)
+        .alert("Request Failed", isPresented: localErrorBinding) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(localErrorMessage ?? "")
@@ -62,16 +82,16 @@ struct DomainEditView: View {
     }
 
     private func save() async {
-        let request = DomainUpdateRequest(
-            autorenew: autorenew,
-            mailforwarding: mailforwarding,
-            dnssec: dnssec,
-            lock: lock,
-            nameservers: nameserversText
-                .split(whereSeparator: \.isNewline)
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-        )
+        guard !viewModel.isSaving else {
+            return
+        }
+
+        let request = request
+
+        guard request.hasChanges else {
+            dismiss()
+            return
+        }
 
         do {
             try await viewModel.updateDomain(named: domain.name, request: request, client: client)
@@ -82,7 +102,7 @@ struct DomainEditView: View {
             if (error as? URLError)?.code == .cancelled {
                 return
             }
-            localErrorMessage = error.localizedDescription
+            localErrorMessage = error.userFacingMessage
         }
     }
 
@@ -95,5 +115,66 @@ struct DomainEditView: View {
                 }
             }
         )
+    }
+
+    private var originalAutorenew: Bool {
+        domain.autorenew ?? false
+    }
+
+    private var originalMailForwarding: Bool {
+        domain.mailforwarding ?? false
+    }
+
+    private var originalDNSSEC: Bool {
+        domain.dnssec ?? false
+    }
+
+    private var originalLock: Bool {
+        domain.lock ?? false
+    }
+
+    private var originalNameservers: [String] {
+        normalizedNameservers(from: (domain.nameservers ?? []).joined(separator: "\n"))
+    }
+
+    private var request: DomainUpdateRequest {
+        DomainUpdateRequest(
+            autorenew: autorenewDirty ? autorenew : nil,
+            mailforwarding: mailforwardingDirty ? mailforwarding : nil,
+            dnssec: dnssecDirty ? dnssec : nil,
+            lock: lockDirty ? lock : nil,
+            nameservers: nameserversDirty ? normalizedNameservers(from: nameserversText) : nil
+        )
+    }
+
+    private var nameserversBinding: Binding<String> {
+        Binding(
+            get: { nameserversText },
+            set: { newValue in
+                nameserversText = newValue
+                nameserversDirty = normalizedNameservers(from: newValue) != originalNameservers
+            }
+        )
+    }
+
+    private func dirtyBinding(
+        for value: Binding<Bool>,
+        dirty: Binding<Bool>,
+        original: Bool
+    ) -> Binding<Bool> {
+        Binding(
+            get: { value.wrappedValue },
+            set: { newValue in
+                value.wrappedValue = newValue
+                dirty.wrappedValue = newValue != original
+            }
+        )
+    }
+
+    private func normalizedNameservers(from text: String) -> [String] {
+        text
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 }

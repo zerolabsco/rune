@@ -28,21 +28,18 @@ struct TokenListView: View {
                 }
             }
         }
-        .sheet(isPresented: $showingAddToken) {
+        .fullScreenCover(isPresented: $showingAddToken) {
             if let client {
                 NavigationStack {
                     TokenAddView(viewModel: viewModel, client: client)
                 }
             }
         }
-        .confirmationDialog(
-            deletionTitle,
-            isPresented: deleteBinding,
-            titleVisibility: .visible
-        ) {
+        .alert(deletionTitle, isPresented: deleteBinding) {
             Button("Delete Token", role: .destructive) {
                 guard let tokenPendingDeletion, let client else { return }
                 Task {
+                    guard !viewModel.isSaving else { return }
                     let removed = await viewModel.removeToken(tokenPendingDeletion, client: client)
                     if removed {
                         onTokenRemoved(tokenPendingDeletion.key)
@@ -50,32 +47,73 @@ struct TokenListView: View {
                     self.tokenPendingDeletion = nil
                 }
             }
+
+            Button("Cancel", role: .cancel) {
+                tokenPendingDeletion = nil
+            }
+        } message: {
+            Text("This action cannot be undone.")
         }
-        .alert("API Error", isPresented: errorBinding) {
+        .alert("Request Failed", isPresented: mutationErrorBinding) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(viewModel.errorMessage ?? "")
+            Text(viewModel.mutationErrorMessage ?? "")
         }
     }
 
     @ViewBuilder
     private func content(client: NjallaClient) -> some View {
-        if viewModel.isLoading && viewModel.tokens.isEmpty {
-            ProgressView()
-        } else if viewModel.tokens.isEmpty {
-            ContentUnavailableView("No Tokens", systemImage: "key.horizontal", description: Text("No API tokens were found on this account."))
-        } else {
-            List(viewModel.tokens) { token in
-                Button {
-                    tokenPendingDeletion = token
-                } label: {
-                    TokenRow(token: token, label: viewModel.tokenLabel(for: token))
+        List {
+            if let errorMessage = viewModel.listErrorMessage {
+                Section {
+                    InlineErrorView(message: errorMessage, retryTitle: "Retry Tokens") {
+                        Task {
+                            await viewModel.loadTokens(client: client)
+                        }
+                    }
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                 }
-                .buttonStyle(.plain)
             }
-            .listStyle(.insetGrouped)
-            .refreshable {
-                await viewModel.loadTokens(client: client)
+
+            if viewModel.isLoading && viewModel.tokens.isEmpty {
+                Section {
+                    HStack {
+                        Spacer()
+                        ProgressView("Loading Tokens")
+                        Spacer()
+                    }
+                }
+            } else if viewModel.tokens.isEmpty {
+                Section {
+                    ContentUnavailableView(
+                        "No Tokens",
+                        systemImage: "key.horizontal",
+                        description: Text("No API tokens found. Create a restricted token for specific access.")
+                    )
+                }
+            } else {
+                ForEach(viewModel.tokens) { token in
+                    TokenRow(token: token, label: viewModel.tokenLabel(for: token))
+                        .contentShape(Rectangle())
+                        .contextMenu {
+                            Button("Delete Token", role: .destructive) {
+                                tokenPendingDeletion = token
+                            }
+                        }
+                        .disabled(viewModel.isSaving)
+                        .opacity(viewModel.isSaving ? 0.6 : 1)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .refreshable {
+            await viewModel.loadTokens(client: client)
+        }
+        .overlay(alignment: .top) {
+            if viewModel.isLoading && !viewModel.tokens.isEmpty {
+                ProgressView()
+                    .padding(.top, 8)
             }
         }
     }
@@ -99,12 +137,12 @@ struct TokenListView: View {
         )
     }
 
-    private var errorBinding: Binding<Bool> {
+    private var mutationErrorBinding: Binding<Bool> {
         Binding(
-            get: { viewModel.errorMessage != nil },
+            get: { viewModel.mutationErrorMessage != nil },
             set: { newValue in
                 if !newValue {
-                    viewModel.errorMessage = nil
+                    viewModel.dismissMutationError()
                 }
             }
         )
@@ -126,6 +164,12 @@ private struct TokenRow: View {
 
             if let from = token.from, !from.isEmpty {
                 Text("From: \(from.joined(separator: ", "))")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let domains = token.allowedDomains, !domains.isEmpty {
+                Text("Domains: \(domains.joined(separator: ", "))")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

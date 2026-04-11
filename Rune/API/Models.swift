@@ -6,7 +6,7 @@ struct WalletBalance: Codable, Equatable {
     let balance: Int
 }
 
-struct DomainListResponse: Codable {
+struct DomainListResponse: Decodable {
     let domains: [Domain]
 }
 
@@ -18,7 +18,11 @@ struct TokenListResponse: Codable {
     let tokens: [APIToken]
 }
 
-struct Domain: Codable, Identifiable, Hashable {
+struct ForwardListResponse: Codable {
+    let forwards: [EmailForward]
+}
+
+struct Domain: Decodable, Identifiable, Hashable {
     var id: String { name }
 
     let name: String
@@ -29,6 +33,33 @@ struct Domain: Codable, Identifiable, Hashable {
     let dnssec: Bool?
     let lock: Bool?
     let nameservers: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case status
+        case expiry
+        case autorenew
+        case mailforwarding
+        case dnssec
+        case dnssecEnabled = "dnssec_enabled"
+        case lock
+        case locked
+        case nameservers
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        status = try container.decodeIfPresent(String.self, forKey: .status)
+        expiry = try container.decodeIfPresent(String.self, forKey: .expiry)
+        autorenew = try container.decodeIfPresent(Bool.self, forKey: .autorenew)
+        mailforwarding = try container.decodeIfPresent(Bool.self, forKey: .mailforwarding)
+        dnssec = try container.decodeIfPresent(Bool.self, forKey: .dnssec) ??
+            container.decodeIfPresent(Bool.self, forKey: .dnssecEnabled)
+        lock = try container.decodeIfPresent(Bool.self, forKey: .lock) ??
+            container.decodeIfPresent(Bool.self, forKey: .locked)
+        nameservers = try container.decodeIfPresent([String].self, forKey: .nameservers)
+    }
 }
 
 struct DNSRecord: Codable, Identifiable, Hashable {
@@ -147,6 +178,16 @@ struct APIToken: Codable, Identifiable, Hashable {
     }
 }
 
+struct EmailForward: Codable, Hashable, Identifiable {
+    let domain: String
+    let from: String
+    let to: String
+
+    var id: String {
+        "\(domain)|\(from)|\(to)"
+    }
+}
+
 enum DNSRecordType: String, CaseIterable, Identifiable, Codable {
     case a = "A"
     case aaaa = "AAAA"
@@ -207,11 +248,67 @@ enum DNSRecordType: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+enum TTLPreset: Int, CaseIterable, Identifiable {
+    case zero = 0
+    case oneMinute = 60
+    case fiveMinutes = 300
+    case fifteenMinutes = 900
+    case oneHour = 3600
+    case threeHours = 10800
+    case sixHours = 21600
+    case oneDay = 86400
+
+    var id: Int { rawValue }
+
+    var label: String {
+        switch self {
+        case .zero:
+            return "0s"
+        case .oneMinute:
+            return "1m"
+        case .fiveMinutes:
+            return "5m"
+        case .fifteenMinutes:
+            return "15m"
+        case .oneHour:
+            return "1h"
+        case .threeHours:
+            return "3h"
+        case .sixHours:
+            return "6h"
+        case .oneDay:
+            return "1d"
+        }
+    }
+
+    static func option(for seconds: Int) -> TTLOption {
+        if let preset = TTLPreset(rawValue: seconds) {
+            return TTLOption(seconds: preset.rawValue, label: preset.label)
+        }
+
+        return TTLOption(seconds: seconds, label: "\(seconds)s", isCustom: true)
+    }
+}
+
+struct TTLOption: Hashable, Identifiable {
+    let seconds: Int
+    let label: String
+    let isCustom: Bool
+
+    init(seconds: Int, label: String, isCustom: Bool = false) {
+        self.seconds = seconds
+        self.label = label
+        self.isCustom = isCustom
+    }
+
+    var id: Int { seconds }
+}
+
 struct DNSRecordDraft: Equatable {
     var type: DNSRecordType = .a
     var name = ""
     var content = ""
-    var ttl = ""
+    var ttlSeconds = TTLPreset.oneHour.rawValue
     var prio = ""
     var weight = ""
     var port = ""
@@ -225,7 +322,7 @@ struct DNSRecordDraft: Equatable {
         type = DNSRecordType(rawValue: record.type) ?? .a
         name = record.name
         content = record.content ?? ""
-        ttl = record.ttl.map(String.init) ?? ""
+        ttlSeconds = record.ttl ?? TTLPreset.oneHour.rawValue
         prio = record.prio.map(String.init) ?? ""
         weight = record.weight.map(String.init) ?? ""
         port = record.port.map(String.init) ?? ""
@@ -236,7 +333,7 @@ struct DNSRecordDraft: Equatable {
 
     mutating func resetTypeSpecificFields() {
         content = ""
-        ttl = ""
+        ttlSeconds = TTLPreset.oneHour.rawValue
         prio = ""
         weight = ""
         port = ""
@@ -251,6 +348,16 @@ struct DNSRecordDraft: Equatable {
 
     var canSubmit: Bool {
         !trimmedName.isEmpty
+    }
+
+    var ttlOptions: [TTLOption] {
+        let presetOptions = TTLPreset.allCases.map { TTLOption(seconds: $0.rawValue, label: $0.label) }
+
+        guard type.usesTTL, TTLPreset(rawValue: ttlSeconds) == nil else {
+            return presetOptions
+        }
+
+        return presetOptions + [TTLPreset.option(for: ttlSeconds)]
     }
 
     func params(domain: String, id: String? = nil) -> [String: Any] {
@@ -268,8 +375,8 @@ struct DNSRecordDraft: Equatable {
             params["content"] = content.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
-        if type.usesTTL, let value = Int(ttl.trimmingCharacters(in: .whitespacesAndNewlines)) {
-            params["ttl"] = value
+        if type.usesTTL {
+            params["ttl"] = ttlSeconds
         }
 
         if type.usesPriority, let value = Int(prio.trimmingCharacters(in: .whitespacesAndNewlines)) {
@@ -302,20 +409,71 @@ struct DNSRecordDraft: Equatable {
 }
 
 struct DomainUpdateRequest {
-    var autorenew: Bool
-    var mailforwarding: Bool
-    var dnssec: Bool
-    var lock: Bool
-    var nameservers: [String]
+    var autorenew: Bool?
+    var mailforwarding: Bool?
+    var dnssec: Bool?
+    var lock: Bool?
+    var nameservers: [String]?
+
+    var hasChanges: Bool {
+        autorenew != nil ||
+        mailforwarding != nil ||
+        dnssec != nil ||
+        lock != nil ||
+        nameservers != nil
+    }
 
     var params: [String: Any] {
-        [
-            "autorenew": autorenew,
-            "mailforwarding": mailforwarding,
-            "dnssec": dnssec,
-            "lock": lock,
-            "nameservers": nameservers
-        ]
+        var params: [String: Any] = [:]
+
+        if let autorenew {
+            params["autorenew"] = autorenew
+        }
+
+        if let mailforwarding {
+            params["mailforwarding"] = mailforwarding
+        }
+
+        if let dnssec {
+            params["dnssec"] = dnssec
+        }
+
+        if let lock {
+            params["lock"] = lock
+        }
+
+        if let nameservers {
+            params["nameservers"] = nameservers
+        }
+
+        return params
+    }
+
+    func isSatisfied(by domain: Domain) -> Bool {
+        if let autorenew, domain.autorenew != autorenew {
+            return false
+        }
+
+        if let mailforwarding, domain.mailforwarding != mailforwarding {
+            return false
+        }
+
+        if let dnssec, domain.dnssec != dnssec {
+            return false
+        }
+
+        if let lock, domain.lock != lock {
+            return false
+        }
+
+        if let nameservers {
+            let normalizedResponse = domain.nameservers ?? []
+            if normalizedResponse != nameservers {
+                return false
+            }
+        }
+
+        return true
     }
 }
 
@@ -323,6 +481,7 @@ struct TokenCreateRequest {
     var comment: String
     var from: [String]
     var allowedMethods: [String]
+    var allowedDomains: [String]
 
     var params: [String: Any] {
         var params: [String: Any] = [:]
@@ -338,6 +497,10 @@ struct TokenCreateRequest {
 
         if !allowedMethods.isEmpty {
             params["allowed_methods"] = allowedMethods
+        }
+
+        if !allowedDomains.isEmpty {
+            params["allowed_domains"] = allowedDomains
         }
 
         return params
