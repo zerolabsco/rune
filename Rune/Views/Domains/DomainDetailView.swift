@@ -35,7 +35,11 @@ struct DomainDetailView: View {
                         NavigationLink("Records") {
                             RecordListView(domainName: domain.name, viewModel: viewModel, client: client)
                         }
+                        NavigationLink("Glue Records") {
+                            GlueListView(domainName: domain.name, viewModel: viewModel, client: client)
+                        }
                     }
+
                 }
                 .listStyle(.insetGrouped)
                 .toolbar {
@@ -79,11 +83,11 @@ struct DomainDetailView: View {
 
     private func nameserverText(_ nameservers: [String]?) -> String {
         guard let nameservers else {
-            return "Not available"
+            return "Njalla"
         }
 
         guard !nameservers.isEmpty else {
-            return "Default"
+            return "Njalla"
         }
 
         return nameservers.joined(separator: ", ")

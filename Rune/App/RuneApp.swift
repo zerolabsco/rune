@@ -13,6 +13,7 @@ private struct RootView: View {
     @StateObject private var settingsViewModel = SettingsViewModel()
     @StateObject private var domainViewModel = DomainViewModel()
     @StateObject private var tokenViewModel = TokenViewModel()
+    @StateObject private var walletViewModel = WalletViewModel()
     @State private var selectedTab = 0
 
     var body: some View {
@@ -38,9 +39,10 @@ private struct RootView: View {
                 }
                 .tag(1)
 
-            SettingsView(viewModel: settingsViewModel) {
+            SettingsView(viewModel: settingsViewModel, walletViewModel: walletViewModel) {
                 domainViewModel.reset()
                 tokenViewModel.reset()
+                walletViewModel.reset()
                 selectedTab = 0
             }
             .tabItem {
@@ -66,6 +68,7 @@ private struct RootView: View {
         guard let client = settingsViewModel.client else {
             domainViewModel.reset()
             tokenViewModel.reset()
+            walletViewModel.reset()
             selectedTab = 0
             return
         }

@@ -65,14 +65,6 @@ struct DomainEditView: View {
                     .controlSize(.large)
             }
         }
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel", role: .cancel) {
-                    dismiss()
-                }
-                .disabled(viewModel.isSaving)
-            }
-        }
         .interactiveDismissDisabled(viewModel.isSaving)
         .alert("Request Failed", isPresented: localErrorBinding) {
             Button("OK", role: .cancel) {}

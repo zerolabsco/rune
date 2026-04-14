@@ -61,12 +61,6 @@ struct DomainListView: View {
         .refreshable {
             await viewModel.loadDomains(client: client)
         }
-        .overlay(alignment: .top) {
-            if viewModel.isLoadingDomains && !viewModel.domains.isEmpty {
-                ProgressView()
-                    .padding(.top, 8)
-            }
-        }
     }
 }
 

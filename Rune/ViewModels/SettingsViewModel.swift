@@ -83,12 +83,12 @@ final class SettingsViewModel: ObservableObject {
         }
     }
 
-    func logout() throws {
+    func logout() async throws {
+        if let client {
+            try await client.logout()
+        }
         try keychainManager.deleteToken()
-        client = nil
-        balance = nil
-        isAuthenticated = false
-        errorMessage = nil
+        clearLocalSession()
     }
 
     func logoutIfCurrentTokenDeleted(_ key: String) throws -> Bool {
@@ -96,7 +96,15 @@ final class SettingsViewModel: ObservableObject {
             return false
         }
 
-        try logout()
+        try keychainManager.deleteToken()
+        clearLocalSession()
         return true
+    }
+
+    private func clearLocalSession() {
+        client = nil
+        balance = nil
+        isAuthenticated = false
+        errorMessage = nil
     }
 }

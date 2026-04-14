@@ -25,10 +25,17 @@ struct NjallaClient: Sendable, Equatable {
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        _ = (response as? HTTPURLResponse)?.statusCode ?? -1
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        debugLogRawResponse(method: method, statusCode: statusCode, data: data)
 
         let decoder = JSONDecoder()
-        let envelope = try decoder.decode(RPCResponse<T>.self, from: data)
+        let envelope: RPCResponse<T>
+        do {
+            envelope = try decoder.decode(RPCResponse<T>.self, from: data)
+        } catch {
+            debugLogDecodeFailure(method: method, error: error)
+            throw error
+        }
 
         if let error = envelope.error {
             throw NjallaError.api(message: error.message)
@@ -39,6 +46,19 @@ struct NjallaClient: Sendable, Equatable {
         }
 
         return result
+    }
+
+    private func debugLogRawResponse(method: String, statusCode: Int, data: Data) {
+        #if DEBUG
+        let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body: \(data.count) bytes>"
+        debugPrint("[NjallaClient][\(method)] status=\(statusCode) raw=\(body)")
+        #endif
+    }
+
+    private func debugLogDecodeFailure(method: String, error: Error) {
+        #if DEBUG
+        debugPrint("[NjallaClient][\(method)] decode-failure=\(error.localizedDescription)")
+        #endif
     }
 
     func listDomains() async throws -> [Domain] {
@@ -79,6 +99,51 @@ struct NjallaClient: Sendable, Equatable {
                 "domain": forward.domain,
                 "from": forward.from,
                 "to": forward.to
+            ]
+        )
+    }
+
+    func listGlue(for domain: String) async throws -> [GlueRecord] {
+        let response: GlueListResponse = try await call("list-glue", params: ["domain": domain])
+        return response.glue.map { record in
+            record.domain.isEmpty ? record.withDomain(domain) : record
+        }
+    }
+
+    func addGlue(for domain: String, name: String, address4: String?, address6: String?) async throws {
+        var params: [String: Any] = [
+            "domain": domain,
+            "name": name
+        ]
+        if let address4, !address4.isEmpty {
+            params["address4"] = address4
+        }
+        if let address6, !address6.isEmpty {
+            params["address6"] = address6
+        }
+        let _: EmptyResult = try await call("add-glue", params: params)
+    }
+
+    func editGlue(for domain: String, name: String, address4: String?, address6: String?) async throws {
+        var params: [String: Any] = [
+            "domain": domain,
+            "name": name
+        ]
+        if let address4, !address4.isEmpty {
+            params["address4"] = address4
+        }
+        if let address6, !address6.isEmpty {
+            params["address6"] = address6
+        }
+        let _: EmptyResult = try await call("edit-glue", params: params)
+    }
+
+    func removeGlue(for domain: String, name: String) async throws {
+        let _: EmptyResult = try await call(
+            "remove-glue",
+            params: [
+                "domain": domain,
+                "name": name
             ]
         )
     }
@@ -124,8 +189,21 @@ struct NjallaClient: Sendable, Equatable {
         let _: EmptyResult = try await call("remove-token", params: ["key": key])
     }
 
+    func logout() async throws {
+        let _: EmptyResult = try await call("logout")
+    }
+
     func getBalance() async throws -> WalletBalance {
         try await call("get-balance")
+    }
+
+    func listTransactions() async throws -> [WalletTransaction] {
+        let response: WalletTransactionListResponse = try await call("list-transactions")
+        return response.transactions
+    }
+
+    func getPayment(id: String) async throws -> WalletPayment {
+        try await call("get-payment", params: ["id": id])
     }
 }
 

@@ -88,12 +88,6 @@ struct ForwardListView: View {
             await viewModel.loadForwards(for: domainName, client: client)
             debugLog("Refresh complete with \(viewModel.forwards.count) forwards for \(domainName)")
         }
-        .overlay(alignment: .top) {
-            if viewModel.isLoadingForwards && !viewModel.forwards.isEmpty {
-                ProgressView()
-                    .padding(.top, 8)
-            }
-        }
         .alert(deleteAlertTitle, isPresented: deleteBinding) {
             Button("Delete Forward", role: .destructive) {
                 guard let forwardPendingDeletion else { return }

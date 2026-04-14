@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var viewModel: SettingsViewModel
+    @ObservedObject var walletViewModel: WalletViewModel
     let onLogout: () -> Void
     @State private var showingLogoutConfirmation = false
 
@@ -33,6 +34,12 @@ struct SettingsView: View {
                         }
                     }
                     .disabled(viewModel.client == nil || viewModel.isLoadingBalance)
+
+                    if let client = viewModel.client {
+                        NavigationLink("Transactions") {
+                            WalletTransactionsView(viewModel: walletViewModel, client: client)
+                        }
+                    }
                 }
 
                 Section("Account") {
@@ -57,11 +64,13 @@ struct SettingsView: View {
             titleVisibility: .visible
         ) {
             Button("Log Out", role: .destructive) {
-                do {
-                    try viewModel.logout()
-                    onLogout()
-                } catch {
-                    viewModel.errorMessage = error.localizedDescription
+                Task {
+                    do {
+                        try await viewModel.logout()
+                        onLogout()
+                    } catch {
+                        viewModel.errorMessage = error.localizedDescription
+                    }
                 }
             }
 

@@ -7,16 +7,19 @@ final class DomainViewModel: ObservableObject {
     @Published private(set) var selectedDomain: Domain?
     @Published private(set) var records: [DNSRecord] = []
     @Published private(set) var forwards: [EmailForward] = []
+    @Published private(set) var glueRecords: [GlueRecord] = []
     @Published private(set) var isLoadingDomains = false
     @Published private(set) var isLoadingDetail = false
     @Published private(set) var isLoadingRecords = false
     @Published private(set) var isLoadingForwards = false
+    @Published private(set) var isLoadingGlue = false
     @Published private(set) var isSaving = false
     @Published private(set) var hasLoadedDomains = false
     @Published var domainsErrorMessage: String?
     @Published var detailErrorMessage: String?
     @Published var recordsErrorMessage: String?
     @Published var forwardsErrorMessage: String?
+    @Published var glueErrorMessage: String?
     @Published var mutationErrorMessage: String?
 
     private var recordsRefreshTask: Task<Void, Never>?
@@ -26,16 +29,19 @@ final class DomainViewModel: ObservableObject {
         selectedDomain = nil
         records = []
         forwards = []
+        glueRecords = []
         isLoadingDomains = false
         isLoadingDetail = false
         isLoadingRecords = false
         isLoadingForwards = false
+        isLoadingGlue = false
         isSaving = false
         hasLoadedDomains = false
         domainsErrorMessage = nil
         detailErrorMessage = nil
         recordsErrorMessage = nil
         forwardsErrorMessage = nil
+        glueErrorMessage = nil
         mutationErrorMessage = nil
         stopAutoRefreshRecords()
     }
@@ -167,6 +173,85 @@ final class DomainViewModel: ObservableObject {
         }
     }
 
+    func loadGlue(for domain: String, client: NjallaClient) async {
+        guard !isLoadingGlue else { return }
+
+        isLoadingGlue = true
+        defer {
+            isLoadingGlue = false
+        }
+
+        do {
+            glueRecords = try await client.listGlue(for: domain).sorted { $0.name < $1.name }
+            glueErrorMessage = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            if (error as? URLError)?.code == .cancelled {
+                return
+            }
+            glueErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func addGlue(for domain: String, name: String, address4: String?, address6: String?, client: NjallaClient) async throws {
+        guard !isSaving else { return }
+
+        isSaving = true
+        mutationErrorMessage = nil
+
+        do {
+            try await client.addGlue(for: domain, name: name, address4: address4, address6: address6)
+            isSaving = false
+            Task {
+                await loadGlue(for: domain, client: client)
+            }
+        } catch {
+            isSaving = false
+            mutationErrorMessage = error.userFacingMessage
+            throw error
+        }
+    }
+
+    func editGlue(for domain: String, name: String, address4: String?, address6: String?, client: NjallaClient) async throws {
+        guard !isSaving else { return }
+
+        isSaving = true
+        mutationErrorMessage = nil
+
+        do {
+            try await client.editGlue(for: domain, name: name, address4: address4, address6: address6)
+            isSaving = false
+            Task {
+                await loadGlue(for: domain, client: client)
+            }
+        } catch {
+            isSaving = false
+            mutationErrorMessage = error.userFacingMessage
+            throw error
+        }
+    }
+
+    func removeGlue(_ record: GlueRecord, client: NjallaClient) async throws {
+        guard !isSaving else { return }
+
+        isSaving = true
+        mutationErrorMessage = nil
+
+        do {
+            try await client.removeGlue(for: record.domain, name: record.name)
+            glueRecords.removeAll { $0.id == record.id }
+            isSaving = false
+            Task {
+                await loadGlue(for: record.domain, client: client)
+            }
+        } catch {
+            isSaving = false
+            mutationErrorMessage = error.userFacingMessage
+            throw error
+        }
+    }
+
     private func fetchRecords(for domain: String, client: NjallaClient) async {
         guard !isLoadingRecords else { return }
 
@@ -255,10 +340,12 @@ final class DomainViewModel: ObservableObject {
 
         do {
             let updatedRecords = try await client.removeRecord(record)
-            guard updatedRecords.contains(where: { $0.id == record.id }) == false else {
-                throw NjallaError.api(message: "The API response indicates the record was not removed.")
+            if updatedRecords.contains(where: { $0.id == record.id }) {
+                // Some API responses can be eventually consistent; treat successful call as authoritative.
+                records.removeAll { $0.id == record.id }
+            } else {
+                records = sortedRecords(updatedRecords)
             }
-            records = sortedRecords(updatedRecords)
             recordsErrorMessage = nil
             isSaving = false
             Task {

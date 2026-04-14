@@ -18,8 +18,46 @@ struct TokenListResponse: Codable {
     let tokens: [APIToken]
 }
 
-struct ForwardListResponse: Codable {
+struct ForwardListResponse: Decodable {
     let forwards: [EmailForward]
+
+    enum CodingKeys: String, CodingKey {
+        case forwards
+        case mailforwards
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let forwardsValue = try? container.decodeIfPresent([EmailForward].self, forKey: .forwards)
+        let mailForwardsValue = try? container.decodeIfPresent([EmailForward].self, forKey: .mailforwards)
+        forwards = forwardsValue ?? mailForwardsValue ?? []
+    }
+}
+
+struct GlueListResponse: Decodable {
+    let glue: [GlueRecord]
+
+    enum CodingKeys: String, CodingKey {
+        case glue
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        glue = (try container.decodeIfPresent([GlueRecord].self, forKey: .glue)) ?? []
+    }
+}
+
+struct WalletTransactionListResponse: Decodable {
+    let transactions: [WalletTransaction]
+
+    enum CodingKeys: String, CodingKey {
+        case transactions
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        transactions = (try container.decodeIfPresent([WalletTransaction].self, forKey: .transactions)) ?? []
+    }
 }
 
 struct Domain: Decodable, Identifiable, Hashable {
@@ -28,6 +66,7 @@ struct Domain: Decodable, Identifiable, Hashable {
     let name: String
     let status: String?
     let expiry: String?
+    let renewPrice: Int?
     let autorenew: Bool?
     let mailforwarding: Bool?
     let dnssec: Bool?
@@ -38,6 +77,9 @@ struct Domain: Decodable, Identifiable, Hashable {
         case name
         case status
         case expiry
+        case renewPrice = "renew_price"
+        case renewalPrice = "renewal_price"
+        case price
         case autorenew
         case mailforwarding
         case dnssec
@@ -52,6 +94,10 @@ struct Domain: Decodable, Identifiable, Hashable {
         name = try container.decode(String.self, forKey: .name)
         status = try container.decodeIfPresent(String.self, forKey: .status)
         expiry = try container.decodeIfPresent(String.self, forKey: .expiry)
+        renewPrice =
+            container.decodeLossyIntIfPresent(forKey: .renewPrice) ??
+            container.decodeLossyIntIfPresent(forKey: .renewalPrice) ??
+            container.decodeLossyIntIfPresent(forKey: .price)
         autorenew = try container.decodeIfPresent(Bool.self, forKey: .autorenew)
         mailforwarding = try container.decodeIfPresent(Bool.self, forKey: .mailforwarding)
         dnssec = try container.decodeIfPresent(Bool.self, forKey: .dnssec) ??
@@ -59,6 +105,20 @@ struct Domain: Decodable, Identifiable, Hashable {
         lock = try container.decodeIfPresent(Bool.self, forKey: .lock) ??
             container.decodeIfPresent(Bool.self, forKey: .locked)
         nameservers = try container.decodeIfPresent([String].self, forKey: .nameservers)
+    }
+}
+
+private extension KeyedDecodingContainer where K == Domain.CodingKeys {
+    func decodeLossyIntIfPresent(forKey key: K) -> Int? {
+        if let intValue = try? decodeIfPresent(Int.self, forKey: key) {
+            return intValue
+        }
+
+        if let stringValue = try? decodeIfPresent(String.self, forKey: key) {
+            return Int(stringValue)
+        }
+
+        return nil
     }
 }
 
@@ -183,9 +243,119 @@ struct EmailForward: Codable, Hashable, Identifiable {
     let from: String
     let to: String
 
+    enum CodingKeys: String, CodingKey {
+        case domain
+        case from
+        case to
+    }
+
+    init(domain: String, from: String, to: String) {
+        self.domain = domain
+        self.from = from
+        self.to = to
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let rawFrom = try container.decode(String.self, forKey: .from).trimmingCharacters(in: .whitespacesAndNewlines)
+        let to = try container.decode(String.self, forKey: .to).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let decodedDomain = try container.decodeIfPresent(String.self, forKey: .domain)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let atIndex = rawFrom.lastIndex(of: "@") {
+            let localPart = String(rawFrom[..<atIndex])
+            let fromDomain = String(rawFrom[rawFrom.index(after: atIndex)...])
+            self.from = localPart.isEmpty ? rawFrom : localPart
+            if let decodedDomain, !decodedDomain.isEmpty {
+                self.domain = decodedDomain
+            } else {
+                self.domain = fromDomain
+            }
+        } else {
+            self.from = rawFrom
+            self.domain = decodedDomain ?? ""
+        }
+
+        self.to = to
+    }
+
     var id: String {
         "\(domain)|\(from)|\(to)"
     }
+}
+
+struct GlueRecord: Codable, Hashable, Identifiable {
+    let domain: String
+    let name: String
+    let address4: String?
+    let address6: String?
+
+    enum CodingKeys: String, CodingKey {
+        case domain
+        case name
+        case address4
+        case address6
+    }
+
+    init(domain: String, name: String, address4: String?, address6: String?) {
+        self.domain = domain
+        self.name = name
+        self.address4 = address4
+        self.address6 = address6
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        domain = (try container.decodeIfPresent(String.self, forKey: .domain)) ?? ""
+        name = try container.decode(String.self, forKey: .name)
+        address4 = try container.decodeIfPresent(String.self, forKey: .address4)
+        address6 = try container.decodeIfPresent(String.self, forKey: .address6)
+    }
+
+    var id: String {
+        "\(domain)|\(name)"
+    }
+
+    func withDomain(_ domain: String) -> GlueRecord {
+        GlueRecord(domain: domain, name: name, address4: address4, address6: address6)
+    }
+}
+
+struct WalletTransaction: Codable, Hashable, Identifiable {
+    let id: String
+    let type: String?
+    let status: String?
+    let amount: Int?
+    let date: String?
+    let details: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case type
+        case status
+        case amount
+        case date
+        case details = "description"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? container.decodeLossyString(forKey: .id)) ?? UUID().uuidString
+        type = try container.decodeIfPresent(String.self, forKey: .type)
+        status = try container.decodeIfPresent(String.self, forKey: .status)
+        amount = try container.decodeLossyIntIfPresent(forKey: .amount)
+        date = try container.decodeIfPresent(String.self, forKey: .date)
+        details = try container.decodeIfPresent(String.self, forKey: .details)
+    }
+}
+
+struct WalletPayment: Codable, Hashable {
+    let id: String?
+    let amount: Int?
+    let status: String?
+    let address: String?
+    let url: String?
 }
 
 enum DNSRecordType: String, CaseIterable, Identifiable, Codable {
@@ -519,6 +689,35 @@ extension String {
 }
 
 private extension KeyedDecodingContainer where K == DNSRecord.CodingKeys {
+    func decodeLossyString(forKey key: K) throws -> String {
+        if let stringValue = try decodeIfPresent(String.self, forKey: key) {
+            return stringValue
+        }
+
+        if let intValue = try decodeIfPresent(Int.self, forKey: key) {
+            return String(intValue)
+        }
+
+        throw DecodingError.keyNotFound(
+            key,
+            DecodingError.Context(codingPath: codingPath, debugDescription: "Missing required value for \(key.stringValue).")
+        )
+    }
+
+    func decodeLossyIntIfPresent(forKey key: K) throws -> Int? {
+        if let intValue = try decodeIfPresent(Int.self, forKey: key) {
+            return intValue
+        }
+
+        if let stringValue = try decodeIfPresent(String.self, forKey: key) {
+            return Int(stringValue)
+        }
+
+        return nil
+    }
+}
+
+private extension KeyedDecodingContainer where K == WalletTransaction.CodingKeys {
     func decodeLossyString(forKey key: K) throws -> String {
         if let stringValue = try decodeIfPresent(String.self, forKey: key) {
             return stringValue

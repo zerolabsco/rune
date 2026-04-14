@@ -73,12 +73,6 @@ struct RecordListView: View {
         .refreshable {
             await viewModel.loadRecords(for: domainName, client: client)
         }
-        .overlay(alignment: .top) {
-            if viewModel.isLoadingRecords && !viewModel.records.isEmpty {
-                ProgressView()
-                    .padding(.top, 8)
-            }
-        }
         .alert("Request Failed", isPresented: mutationErrorBinding) {
             Button("OK", role: .cancel) {}
         } message: {
