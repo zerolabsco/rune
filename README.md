@@ -1,3 +1,10 @@
+> [!WARNING]
+> **Archived project**
+>
+> This repository is no longer maintained, as I don't really use Njalla anymore.
+>
+> If there is interest or you'd like to contribute, I am happy to reconsider development of this app.
+
 # Rune
 
 Njalla on iOS.
@@ -5,8 +12,6 @@ Njalla on iOS.
 Rune is a native iOS client for managing your Njalla account. It provides fast,
 minimal access to domains, DNS, API tokens, and account balance without relying
 on the web UI.
-
----
 
 ## Principles
 
@@ -21,8 +26,6 @@ on the web UI.
 
 - **No abstraction layers for the sake of it**  
   Direct API usage. Clear data flow.
-
----
 
 ## Features (v1.x)
 
@@ -42,8 +45,6 @@ on the web UI.
 ### Account
 - View wallet balance
 
----
-
 ## Authentication
 
 Rune uses **API tokens only**.
@@ -52,38 +53,11 @@ Rune uses **API tokens only**.
 - No username/password login
 - Token is validated on first launch via API
 
----
-
 ## Tech Stack
 
 - SwiftUI
 - URLSession (no third-party networking)
 - Njalla HTTP API
-
----
-
-## Scope
-
-Rune is intentionally limited.
-
-Not supported:
-- domain registration
-- wallet top-ups
-- server management
-- destructive account actions
-
----
-
-## Status
-
-Active development.
-
-Early versions focus on:
-- correctness
-- stability
-- clean UX
-
----
 
 ## Why
 
